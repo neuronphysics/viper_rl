@@ -15,7 +15,8 @@ sys.path.append(str(directory.parent))
 
 from viper_rl.dreamerv3 import embodied
 from viper_rl.dreamerv3.embodied import wrappers
-
+from train_videogpt import collect_data
+from flax.training import checkpoints
 
 def main(argv=None):
   from viper_rl.dreamerv3 import agent as agt
@@ -104,7 +105,13 @@ def main(argv=None):
       cleanup.append(env)
       agent = agt.Agent(env.obs_space, env.act_space, step, config)
       embodied.run.eval_only(agent, env, logger, args)
-
+      
+            
+      # Initialize the agent with the loaded state
+      
+      collected_data = collect_data(agent, env, config)
+      print(f"Collected data completed and its shape is: {collected_data.shape}")
+      
     elif args.script == 'eval_only_save':
       env = make_envs(config)
       agent = agt.Agent(env.obs_space, env.act_space, step, config)

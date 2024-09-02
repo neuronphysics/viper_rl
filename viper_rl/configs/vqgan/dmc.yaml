@@ -1,6 +1,6 @@
 seed: 1234
 
-batch_size: 128
+batch_size: 64
 lr: 1.e-4
 total_steps: 1000000
 warmup_steps: 1000
@@ -21,7 +21,7 @@ perceptual_weight: 0.1
 model: "vqgan"
 ae:
   ch: 128
-  ch_mult: [1, 2, 2, 2]
+  ch_mult: [1, 2, 2]
   num_res_blocks: 1
   attn_resolutions: []
   z_channels: 64
@@ -29,7 +29,7 @@ ae:
   dropout: 0.
   n_embed: 256
   embed_dim: 64
-  patch_size: [8, 8]
+  patch_size: [4, 4]
 
 disc:
   base_features: 32

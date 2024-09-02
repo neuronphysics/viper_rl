@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 import flax
 from flax.training import train_state
+from flax.core import freeze, unfreeze
 
 from lpips_jax import LPIPSEvaluator
 
@@ -121,8 +122,11 @@ def init_model_state_videogpt(rng, model, batch, config):
         **batch,
         training=True,
         method=model.loss
-    ).unfreeze()
-    params = variables.pop('params')
+    )
+    #print(f"Type of variables: {type(variables)}")
+    params = variables.pop('params') if 'params' in variables else variables
+
+    #params = variables.pop('params')
     assert len(variables) == 0
     print_model_size(params)
 
@@ -137,19 +141,40 @@ def init_model_state_videogpt(rng, model, batch, config):
 
     
 def init_model_state_vqgan(rng, model, batch, config):
+    #variables = model.vqgan.init(
+    #    rngs={'params': rng, 'dropout': rng},
+    #    image=batch['image'],
+    #    deterministic=False
+    #).unfreeze()
     variables = model.vqgan.init(
         rngs={'params': rng, 'dropout': rng},
         image=batch['image'],
         deterministic=False
-    ).unfreeze()
+    )
+    if isinstance(variables, dict):
+        variables = freeze(variables)
+    
+    variables = unfreeze(variables)
     vqgan_params = variables.pop('params')
     print_model_size(vqgan_params, name='vqgan')
 
+    #variables = model.disc.init(
+    #    rngs={'params': rng},
+    #    image=batch['image'],
+    #    deterministic=False
+    #).unfreeze()
+    
     variables = model.disc.init(
         rngs={'params': rng},
         image=batch['image'],
         deterministic=False
-    ).unfreeze()
+    )
+    
+    if isinstance(variables, dict):
+        variables = freeze(variables)
+    
+    variables = unfreeze(variables)
+   
     disc_params = variables.pop('params')
     disc_model_state = variables
     print_model_size(disc_params, name='disc')

@@ -10,6 +10,8 @@ import pickle
 import random
 import wandb
 from datetime import datetime
+import pandas as pd
+from tqdm import tqdm
 
 import jax
 import jax.numpy as jnp
@@ -25,7 +27,44 @@ from viper_rl.videogpt.sampler import VideoGPTSampler
 from viper_rl.videogpt.data import load_dataset
 from viper_rl.videogpt.train_utils import init_model_state_videogpt, get_first_device, ProgressMeter, \
     save_video_grid, add_border, save_video
-
+    
+    
+def collect_data( agent, env, config, num_episodes=100):
+    data = []
+    for episode in tqdm(range(num_episodes)):
+        obs = env.reset()
+        state = agent.initial_state(1)
+        done = False
+        episode_data = []
+        while not done:
+            action, state = agent.policy(obs, state, mode='eval')  # Assume model.sample() method exists
+            action = jax.device_get(action['action'])
+            next_obs, reward, done, info = env.step(action)
+            rgb_image = env.render(mode='rgb_array')
+            
+            
+            episode_data.append({
+                'episode': episode,
+                'observation': obs,
+                'rgb_image': rgb_image,
+                'action': action,
+                'reward': reward,
+                'done': done,
+                **info  # Include any additional info from the environment
+            })
+            obs = next_obs
+            
+        data.extend(episode_data)
+    
+    # Convert to DataFrame
+    df = pd.DataFrame(data)
+    
+    # Save to file
+    df.to_parquet(f'{config.logdir}/collected_data.parquet')
+    print(f"Data saved to {config.logdir}/collected_data.parquet")
+    
+    
+    return df
 
 def main():
     global model
@@ -65,17 +104,21 @@ def main():
     state = jax_utils.replicate(state)
 
     ckpt_dir = osp.join(config.output_dir, 'checkpoints')
+    ckpt_dir = os.path.abspath(ckpt_dir)  # Convert to absolute path
 
     rng = jax.random.fold_in(rng, jax.process_index() + random.randint(0, 100000))
     rngs = jax.random.split(rng, jax.local_device_count())
     best_loss = float('inf')
+    best_state = None
     while iteration <= config.total_steps:
         iteration, state, rngs = train(iteration, ae, model, state, train_loader,
                                        schedule_fn, rngs)
         if iteration % config.test_interval == 0:
             val_loss, rngs = validate(iteration, ae, model, state, test_loader, rngs)
             is_best = val_loss < best_loss
-            best_loss = min(best_loss, val_loss)
+            if is_best:
+                best_state = jax_utils.unreplicate(state)
+                best_loss = min(best_loss, val_loss)
         if iteration % config.viz_interval == 0:
             visualize(sampler, ae, iteration, state, test_loader)
         if iteration % config.save_interval == 0 and is_master_process and is_best:
@@ -84,6 +127,8 @@ def main():
             print('Saved checkpoint to', save_path)
             del state_
         iteration += 1
+        
+    print("Training complete. Collecting data...")
 
 
 def train_step(batch, state, rng):
