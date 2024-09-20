@@ -30,7 +30,7 @@ This code release provides a reference VIPER implementation which uses [VideoGPT
 
 ## Install:
 
-Create a conda environment with Python 3.8:
+Create a conda environment with Python 3.9 (3.9.19 tested if I remember correctly):
 
 ```
 conda create -n viper python=3.8
@@ -87,6 +87,7 @@ To train the VideoGPT, update `ae_ckpt` in `viper_rl/configs/dmc.yaml` to point 
 ```
 python scripts/train_videogpt.py -o viper_rl_data/checkpoints/dmc_videogpt_l16_s1 -c viper_rl/configs/videogpt/dmc.yaml
 ```
+(Note: For utilizing multiple GPUs change the batch size in the config to something greater than 1 but dividable by the gpu count you want to use)
 
 ## Policy training
 
