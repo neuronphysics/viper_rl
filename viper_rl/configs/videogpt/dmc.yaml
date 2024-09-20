@@ -1,6 +1,6 @@
 seed: 1234
 
-batch_size: 1
+batch_size: 2
 lr: 1.e-4
 total_steps: 800000
 warmup_steps: 0
