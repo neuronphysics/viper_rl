@@ -33,7 +33,7 @@ This code release provides a reference VIPER implementation which uses [VideoGPT
 Create a conda environment with Python 3.9 (3.9.19 tested if I remember correctly):
 
 ```
-conda create -n viper python=3.8
+conda create -n viper python=3.9
 conda activate viper
 ```
 
