@@ -28,42 +28,195 @@ from viper_rl.videogpt.data import load_dataset
 from viper_rl.videogpt.train_utils import init_model_state_videogpt, get_first_device, ProgressMeter, \
     save_video_grid, add_border, save_video
     
+def print_class_methods(obj, include_private=False):
+    """Print all methods of a class or object using different approaches.
     
-def collect_data( agent, env, config, num_episodes=100):
+    Args:
+        obj: The class or object to inspect
+        include_private: Whether to include private methods (starting with _)
+    """
+    # Get the class if an instance is passed
+    cls = obj if isinstance(obj, type) else obj.__class__
+    
+    print(f"\n=== Methods of {cls.__name__} ===\n")
+    
+    # Method 1: Using dir()
+    print("Using dir():")
+    methods = []
+    for attr in dir(obj):
+        # Get the attribute
+        try:
+            attr_value = getattr(obj, attr)
+        except:
+            continue
+            
+        # Check if it's a method
+        if callable(attr_value):
+            if include_private or not attr.startswith('_'):
+                methods.append(attr)
+    
+    for method in sorted(methods):
+        print(f"  - {method}")
+    
+    # Method 2: Using inspect
+    print("\nUsing inspect:")
+    import inspect
+    
+    members = inspect.getmembers(obj, predicate=inspect.ismethod)
+    for name, method in members:
+        if include_private or not name.startswith('_'):
+            try:
+                signature = inspect.signature(method)
+                print(f"  - {name}{signature}")
+            except ValueError:
+                print(f"  - {name}()")
+    
+    # Method 3: Get method docstrings
+    print("\nMethods with docstrings:")
+    for method_name in methods:
+        try:
+            method = getattr(obj, method_name)
+            if method.__doc__:
+                print(f"\n  {method_name}:")
+                print(f"    {method.__doc__.strip()}")
+        except:
+            continue
+
+    
+def collect_data(agent, env, config, num_episodes=100):
     data = []
-    for episode in tqdm(range(num_episodes)):
-        obs = env.reset()
-        state = agent.initial_state(1)
-        done = False
-        episode_data = []
-        while not done:
-            action, state = agent.policy(obs, state, mode='eval')  # Assume model.sample() method exists
-            action = jax.device_get(action['action'])
-            next_obs, reward, done, info = env.step(action)
-            rgb_image = env.render(mode='rgb_array')
+    num_envs = len(env)
+    episodes_per_env = num_episodes // num_envs
+    remaining_episodes = num_episodes % num_envs
+
+    total_episodes = [episodes_per_env] * num_envs
+    for i in range(remaining_episodes):
+        total_episodes[i] += 1
+
+    env_episode_counts = [0] * num_envs
+    env_done = [False] * num_envs
+
+    # Initial reset using DreamerV3's API - properly format action for batch env
+    act_shape = env.act_space['action'].shape
+    action_reset = {
+        'action': jnp.zeros([num_envs, *act_shape]),
+        'reset': jnp.ones(num_envs, bool)  # Array of True for all envs
+    }
+    # Convert inputs using JAXAgent's method
+    action_reset = agent._convert_inps(action_reset, agent.policy_devices)
+    obs = env.step(action_reset)
+    obs = agent._convert_inps(obs, agent.policy_devices)
+    
+    # Let the policy handle the state
+    state = None
+    
+    
+
+    pbar = tqdm(total=num_episodes, desc="Collecting episodes")
+    while sum(env_episode_counts) < num_episodes:
+        # Get action in eval mode
+        action, state = agent.policy(obs, state, mode='eval')
+        action = jax.device_get(action)
+        
+        # Step environment with proper action format
+        env_action = {
+            'action': action['action'],
+            'reset': jnp.zeros(num_envs, bool)  # Array of False for all envs
+        }
+        # Convert inputs using JAXAgent's method
+        env_action = agent._convert_inps(env_action, agent.policy_devices)
+        next_obs = env.step(env_action)
+        next_obs = agent._convert_inps(next_obs, agent.policy_devices)
+
+
+        # Convert to host memory for data collection
+        next_obs_np = agent._convert_outs(next_obs, agent.policy_devices)
+        obs_np = agent._convert_outs(obs, agent.policy_devices)
+        action_np = agent._convert_outs(action, agent.policy_devices)
+
+        for i in range(num_envs):
+            if env_done[i]:
+                continue
             
+            episode_data = {
+                'episode': env_episode_counts[i],
+                'observation': {k: v[i] for k, v in obs_np.items()},
+                'rgb_image': next_obs['image'][i],
+                'action': action_np['action'][i],
+                'reward': float(next_obs_np['reward'][i]),
+                'done': bool(next_obs_np['is_last'][i]),
+                'is_first': bool(next_obs_np['is_first'][i])
+            }
+            data.append(episode_data)
+
             
-            episode_data.append({
-                'episode': episode,
-                'observation': obs,
-                'rgb_image': rgb_image,
-                'action': action,
-                'reward': reward,
-                'done': done,
-                **info  # Include any additional info from the environment
-            })
-            obs = next_obs
+            if next_obs['is_last'][i]:
+                env_done[i] = True
+                env_episode_counts[i] += 1
+                pbar.update(1)
+                
+                if env_episode_counts[i] < total_episodes[i]:
+                    # Reset this specific environment
+                    
+                    
+                    reset_action = {
+                        'action': np.zeros([num_envs, *act_shape]),
+                        'reset':  np.zeros(num_envs, dtype=bool)
+                    }
+                    reset_action['reset'][i] = True
+                    #convert to device array
+                    reset_action = agent._convert_inps(reset_action, agent.policy_devices)
+                    obs = env.step(reset_action)
+                    obs = agent._convert_inps(obs, agent.policy_devices)
+                    state = None
+                    env_done[i] = False
+                    
+        obs = next_obs
+    pbar.close()
+
+    # Process collected data into a structured format
+    processed_data = []
+    for ep_data in data:
+        entry = {
+            'episode': ep_data['episode'],
+            'rgb_image': ep_data['rgb_image'],
+            'reward': ep_data['reward'],
+            'done': ep_data['done'],
+            'is_first': ep_data['is_first']
+        }
+        
+        # Add observations
+        for k, v in ep_data['observation'].items():
+            if k not in ['is_first', 'is_last', 'reward', 'is_terminal']:
+                entry[f'obs_{k}'] = v
+                
+        # Add actions
+        if isinstance(ep_data['action'], dict):
+            for k, v in ep_data['action'].items():
+                entry[f'action_{k}'] = v
+        else:
+            entry['action'] = ep_data['action']
             
-        data.extend(episode_data)
+        processed_data.append(entry)
+
+    # Save data
+    save_dir = f'{config.logdir}/collected_data'
+    os.makedirs(save_dir, exist_ok=True)
     
-    # Convert to DataFrame
-    df = pd.DataFrame(data)
+    # Save DataFrame to parquet
+    df = pd.DataFrame(processed_data)
+    df.to_parquet(f'{save_dir}/trajectory_data.parquet')
     
-    # Save to file
-    df.to_parquet(f'{config.logdir}/collected_data.parquet')
-    print(f"Data saved to {config.logdir}/collected_data.parquet")
+    # Save numpy arrays for large data (like images)
+    np.savez_compressed(
+        f'{save_dir}/trajectory_arrays.npz',
+        rgb_images=np.array([d['rgb_image'] for d in processed_data]),
+        actions=np.array([d['action'] for d in processed_data]),
+        rewards=np.array([d['reward'] for d in processed_data]),
+        dones=np.array([d['done'] for d in processed_data])
+    )
     
-    
+    print(f"Data saved to {save_dir}")
     return df
 
 def main():

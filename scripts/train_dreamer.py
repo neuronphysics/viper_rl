@@ -108,8 +108,8 @@ def main(argv=None):
       
             
       # Initialize the agent with the loaded state
-      
-      collected_data = collect_data(agent, env, config)
+      print(f"Loading the agent from the checkpoint and collecting data") 
+      collected_data = collect_data(agent, env, config, num_episodes=config.run.num_episodes)
       print(f"Collected data completed and its shape is: {collected_data.shape}")
       
     elif args.script == 'eval_only_save':
