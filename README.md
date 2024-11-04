@@ -98,6 +98,12 @@ python scripts/train_dreamer.py --configs=dmc_vision videogpt_prior_rb --task=dm
 
 Custom checkpoint directories can be specified with the `$VIPER_CHECKPOINT_DIR` environment variable. The default checkpoint path is set to `viper_rl_data/checkpoints/`.
 
+python script to collect data from dmc environments
+```
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+python scripts/train_dreamer.py --configs=dmc_vision videogpt_prior_rb --task=dmc_cheetah_run --reward_model=dmc_clen16_fskip4 --logdir=~/logdir --run.script=eval_only --run.num_episodes=3000
+```
+
 **Note**: For Atari, you will need to install [atari-py][ataripy] and follow the Atari 2600 VCS ROM install instructions.
 
 [jax]: https://github.com/google/jax#pip-installation-gpu-cuda-installed-via-pip-easier
