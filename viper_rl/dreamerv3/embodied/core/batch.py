@@ -21,6 +21,15 @@ class BatchEnv(base.Env):
 
     def __len__(self):
         return len(self._envs)
+    
+    def reset(self):
+        obs = []
+        for env in self._envs:
+            ob = env.reset()
+            obs.append(ob)
+        if self._parallel:
+            obs = [ob() for ob in obs]
+        return {k: np.array([ob[k] for ob in obs]) for k in obs[0]}
 
     def step(self, action):
         assert all(len(v) == len(self._envs) for v in action.values()), (

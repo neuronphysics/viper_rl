@@ -128,7 +128,13 @@ class RSSM(nj.Module):
         if len(prev_action.shape) > len(prev_stoch.shape):  # 2D actions.
             shape = prev_action.shape[:-2] + (np.prod(prev_action.shape[-2:]),)
             prev_action = prev_action.reshape(shape)
+        #debug prints
+        #print("prev_stoch shape:", prev_stoch.shape)
+        #print("prev_action shape:", prev_action.shape)
+        
         x = jnp.concatenate([prev_stoch, prev_action], -1)
+        
+        
         x = self.get("img_in", Linear, **self._kw)(x)
         x, deter = self._gru(x, prev_state["deter"])
         x = self.get("img_out", Linear, **self._kw)(x)
