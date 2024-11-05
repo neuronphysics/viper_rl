@@ -83,8 +83,13 @@ def print_class_methods(obj, include_private=False):
             continue
 
     
-def collect_data(agent, env, config, num_episodes=100):
+def collect_data(agent, env, config, num_episodes=100, save_frequency=200):
+    """Collect data with periodic saving to manage memory"""
+    save_dir = Path(config.logdir) / 'collected_data'
+    save_dir.mkdir(parents=True, exist_ok=True)
+    
     data = []
+    batch_idx = 0
     num_envs = len(env)
     episodes_per_env = num_episodes // num_envs
     remaining_episodes = num_episodes % num_envs
@@ -95,6 +100,8 @@ def collect_data(agent, env, config, num_episodes=100):
 
     env_episode_counts = [0] * num_envs
     env_done = [False] * num_envs
+    
+    total_collected_episodes = 0
 
     # Initial reset using DreamerV3's API - properly format action for batch env
     act_shape = env.act_space['action'].shape
@@ -155,16 +162,18 @@ def collect_data(agent, env, config, num_episodes=100):
                 env_episode_counts[i] += 1
                 pbar.update(1)
                 
+                # Save batch if we've collected enough episodes
+                if len(data) >= save_frequency:
+                    save_batch_data(data, save_dir, batch_idx)
+                    batch_idx += 1
+                    data = []  # Clear the data list
+                
                 if env_episode_counts[i] < total_episodes[i]:
-                    # Reset this specific environment
-                    
-                    
                     reset_action = {
                         'action': np.zeros([num_envs, *act_shape]),
-                        'reset':  np.zeros(num_envs, dtype=bool)
+                        'reset': np.zeros(num_envs, dtype=bool)
                     }
                     reset_action['reset'][i] = True
-                    #convert to device array
                     reset_action = agent._convert_inps(reset_action, agent.policy_devices)
                     obs = env.step(reset_action)
                     obs = agent._convert_inps(obs, agent.policy_devices)
@@ -174,51 +183,62 @@ def collect_data(agent, env, config, num_episodes=100):
         obs = next_obs
     pbar.close()
 
-    # Process collected data into a structured format
-    processed_data = []
-    for ep_data in data:
-        entry = {
-            'episode': ep_data['episode'],
-            'rgb_image': ep_data['rgb_image'],
-            'reward': ep_data['reward'],
-            'done': ep_data['done'],
-            'is_first': ep_data['is_first']
-        }
-        
-        # Add observations
-        for k, v in ep_data['observation'].items():
-            if k not in ['is_first', 'is_last', 'reward', 'is_terminal']:
-                entry[f'obs_{k}'] = v
-                
-        # Add actions
-        if isinstance(ep_data['action'], dict):
-            for k, v in ep_data['action'].items():
-                entry[f'action_{k}'] = v
-        else:
-            entry['action'] = ep_data['action']
-            
-        processed_data.append(entry)
+    # Save any remaining data
+    if data:
+        save_batch_data(data, save_dir, batch_idx)
+        batch_idx += 1
 
-    # Save data
-    save_dir = f'{config.logdir}/collected_data'
-    os.makedirs(save_dir, exist_ok=True)
+    metadata = {
+        'total_episodes': num_episodes,
+        'total_batches': batch_idx,
+        'save_frequency': save_frequency,
+        'observation_space': {k: v.shape for k, v in obs_np.items()},
+        'action_shape': action_np['action'].shape
+    }
+    np.save(save_dir / 'metadata.npy', metadata)
     
-    # Save DataFrame to parquet
+    print(f"Data saved in {batch_idx} batches to {save_dir}")
+    return None
+
+def load_collected_data(data_dir, batch_indices=None):
+    """Load collected data from batches"""
+    data_dir = Path(data_dir)
+    metadata = np.load(data_dir / 'metadata.npy', allow_pickle=True).item()
+    
+    if batch_indices is None:
+        batch_indices = range(metadata['total_batches'])
+        
+    all_data = []
+    for i in batch_indices:
+        batch_dir = data_dir / f'batch_{i}'
+        df = pd.read_parquet(batch_dir / 'trajectory_data.parquet')
+        arrays = np.load(batch_dir / 'trajectory_arrays.npz')
+        all_data.append({
+            'df': df,
+            'arrays': arrays
+        })
+        
+    return all_data, metadata
+
+def save_batch_data(processed_data, save_dir, batch_idx):
+    """Helper function to save a batch of episodes with all data"""
+    # Create batch directory
+    batch_dir = save_dir / f'batch_{batch_idx}'
+    batch_dir.mkdir(exist_ok=True)
+    
+    # Save DataFrame with episode metadata and observations
     df = pd.DataFrame(processed_data)
-    df.to_parquet(f'{save_dir}/trajectory_data.parquet')
+    df.to_parquet(batch_dir / 'trajectory_data.parquet')
     
-    # Save numpy arrays for large data (like images)
+    # Save numpy arrays for image data and other large arrays
     np.savez_compressed(
-        f'{save_dir}/trajectory_arrays.npz',
+        batch_dir / 'trajectory_arrays.npz',
         rgb_images=np.array([d['rgb_image'] for d in processed_data]),
+        observations=np.array([{k: v for k, v in d['observation'].items()} for d in processed_data]),
         actions=np.array([d['action'] for d in processed_data]),
         rewards=np.array([d['reward'] for d in processed_data]),
         dones=np.array([d['done'] for d in processed_data])
     )
-    
-    print(f"Data saved to {save_dir}")
-    return df
-
 def main():
     global model
     rng = jax.random.PRNGKey(config.seed)
