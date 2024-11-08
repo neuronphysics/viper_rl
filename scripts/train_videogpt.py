@@ -12,6 +12,7 @@ import wandb
 from datetime import datetime
 import pandas as pd
 from tqdm import tqdm
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -211,34 +212,38 @@ def load_collected_data(data_dir, batch_indices=None):
     all_data = []
     for i in batch_indices:
         batch_dir = data_dir / f'batch_{i}'
-        df = pd.read_parquet(batch_dir / 'trajectory_data.parquet')
-        arrays = np.load(batch_dir / 'trajectory_arrays.npz')
-        all_data.append({
-            'df': df,
-            'arrays': arrays
-        })
+        arrays = np.load(batch_dir / 'trajectory_data.npz')
+        all_data.append(arrays)
         
     return all_data, metadata
 
 def save_batch_data(processed_data, save_dir, batch_idx):
-    """Helper function to save a batch of episodes with all data"""
+    """Helper function to save a batch of episodes with all data using only numpy arrays"""
     # Create batch directory
     batch_dir = save_dir / f'batch_{batch_idx}'
     batch_dir.mkdir(exist_ok=True)
     
-    # Save DataFrame with episode metadata and observations
-    df = pd.DataFrame(processed_data)
-    df.to_parquet(batch_dir / 'trajectory_data.parquet')
+    # Create arrays for all data
+    array_data = {
+        'episodes': np.array([d['episode'] for d in processed_data]),
+        'rgb_images': np.array([d['rgb_image'] for d in processed_data]),
+        'actions': np.array([d['action'] for d in processed_data]),
+        'rewards': np.array([d['reward'] for d in processed_data]),
+        'dones': np.array([d['done'] for d in processed_data]),
+        'is_firsts': np.array([d['is_first'] for d in processed_data])
+    }
     
-    # Save numpy arrays for image data and other large arrays
-    np.savez_compressed(
-        batch_dir / 'trajectory_arrays.npz',
-        rgb_images=np.array([d['rgb_image'] for d in processed_data]),
-        observations=np.array([{k: v for k, v in d['observation'].items()} for d in processed_data]),
-        actions=np.array([d['action'] for d in processed_data]),
-        rewards=np.array([d['reward'] for d in processed_data]),
-        dones=np.array([d['done'] for d in processed_data])
-    )
+    # Add observation arrays
+    if processed_data and 'observation' in processed_data[0]:
+        obs_dict = processed_data[0]['observation']
+        for key in obs_dict.keys():
+            array_data[f'obs_{key}'] = np.array([
+                d['observation'][key] for d in processed_data
+            ])
+    
+    # Save everything in a single npz file
+    np.savez_compressed(batch_dir / 'trajectory_data.npz', **array_data)    
+    
 def main():
     global model
     rng = jax.random.PRNGKey(config.seed)
